@@ -3,8 +3,7 @@ import folium
 import random
 import streamlit as st
 from shapely import wkt
-from shapely.geometry import Point
-from folium.plugins import HeatMap
+from shapely.geometry import Point, Polygon
 from folium.features import DivIcon
 
 # Configurar el modo amplio de Streamlit
@@ -36,20 +35,24 @@ st.markdown(
             font-weight: bold;
             margin: 10px;
         }
-        .dataframe-header {
-            background-color: #0078D4 !important;
-            color: white !important;
-            text-align: center !important;
-            font-weight: bold !important;
-        }
         img {
             height: 75px !important;
             float: left;
             object-fit: contain;
             background-color: #1B2D54;
         }
+        .scrollable-table {
+            height: 450px;
+            overflow-y: scroll;
+            display: block;
+            border: 1px solid #ccc;
+        }
+        .scrollable-table table th {
+            background-color: #1B2D54;
+            color: white;
+            text-align: center;
+        }
     </style>
-    
     """,
     unsafe_allow_html=True
 )
@@ -62,6 +65,18 @@ with st.sidebar:
 
     # Subir archivo XLSX para polígonos
     polygon_file = st.file_uploader("Poligonos .xlsx", type=["xlsx"])
+
+# Variable para almacenar los polígonos
+polygons = None
+
+# Leer archivo de polígonos si está disponible
+if polygon_file:
+    polygon_data = pd.read_excel(polygon_file)
+    if 'POLIGONO' in polygon_data.columns and 'Segmentacion' in polygon_data.columns and 'NOMBRE' in polygon_data.columns:
+        polygon_data['geometry'] = polygon_data['POLIGONO'].apply(wkt.loads)
+        polygons = {
+            row['NOMBRE']: (row['geometry'], row['Segmentacion']) for _, row in polygon_data.iterrows()
+        }
 
 if uploaded_file:
     # Leer el archivo CSV
@@ -77,6 +92,17 @@ if uploaded_file:
 
         # Ordenar los datos por identificación del cliente, fecha y hora
         df = df.sort_values(by=['identification', 'fecha', 'hora'])
+
+        # Si hay polígonos, agregar la columna 'Sitio'
+        if polygons:
+            def get_polygon_name(lat, lon):
+                point = Point(lon, lat)
+                for name, (poly, segmentacion) in polygons.items():
+                    if poly.contains(point):
+                        return name
+                return 'Fuera de Polígonos'
+
+            df['Sitio'] = df.apply(lambda row: get_polygon_name(row['latitude'], row['longitude']), axis=1)
 
         # Combobox para seleccionar la identificación
         identificaciones = df['identification'].unique()
@@ -153,9 +179,20 @@ if uploaded_file:
             trayectoria = [(lat, lon) for lat, lon, fecha, hora, monto in puntos]
             folium.PolyLine(trayectoria, color=color, weight=2.5, opacity=0.7).add_to(mapa)
 
-        # Agregar gráfico de calor al mapa
-        heat_data = cliente_data[['latitude', 'longitude']].values.tolist()
-        HeatMap(heat_data, radius=10).add_to(mapa)
+        # Dibujar polígonos en el mapa
+        if polygons:
+            for name, (poly, segmentacion) in polygons.items():
+                color = "red" if segmentacion == "Riesgo" else "blue"
+                folium.Polygon(
+                    locations=[(point[1], point[0]) for point in poly.exterior.coords],
+                    color=color,
+                    weight=2,
+                    opacity=0.7,
+                    fill=True,
+                    fill_color=color,
+                    fill_opacity=0.3,
+                    popup=f"{name} ({segmentacion})"
+                ).add_to(mapa)
 
         # Crear dos columnas: el mapa más grande
         col_mapa, col_tabla = st.columns([2, 1])
@@ -168,18 +205,18 @@ if uploaded_file:
         with col_tabla:
             # Mostrar la tabla detallada con la información de la identificación seleccionada
             st.subheader("Detalles del Cliente")
+            cliente_data['monto'] = cliente_data['monto'].round(2)
+            if 'Sitio' in cliente_data.columns:
+                cliente_data_display = cliente_data[['fecha', 'hora', 'monto', 'Sitio']]
+            else:
+                cliente_data_display = cliente_data[['fecha', 'hora', 'monto']]
+
             st.markdown(
-                cliente_data[['fecha', 'hora', 'monto']]
-                .style.set_table_styles([
-                    {"selector": "thead th", "props": [
-                        ("background-color", "#1B2D54"),
-                        ("color", "white"),
-                        ("text-align", "center")
-                    ]},
-                    {"selector": "tbody td", "props": [
-                        ("text-align", "center")
-                    ]}
-                ]).to_html(),
+                f"""
+                <div class="scrollable-table">
+                    {cliente_data_display.to_html(index=False, classes='table table-bordered')}
+                </div>
+                """,
                 unsafe_allow_html=True
             )
     else:
