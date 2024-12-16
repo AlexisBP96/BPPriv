@@ -47,9 +47,19 @@ st.markdown(
             display: block;
             border: 1px solid #ccc;
         }
+        .scrollable-table table {
+            border-collapse: collapse;
+            width: 100%;
+        }
         .scrollable-table table th {
             background-color: #1B2D54;
             color: white;
+            text-align: center;
+            position: sticky;
+            top: 0;
+            z-index: 2;
+        }
+        .scrollable-table table td {
             text-align: center;
         }
     </style>
