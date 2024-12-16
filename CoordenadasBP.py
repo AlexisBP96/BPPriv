@@ -10,7 +10,7 @@ from folium.features import DivIcon
 # Configurar el modo amplio de Streamlit
 st.set_page_config(layout="wide")
 
-st.image("PBI BP Azul.png", use_container_width=True, output_format="PNG")
+st.image("assets/PBI BP Azul.png", use_container_width=True, output_format="PNG")
 st.markdown(
     """
     <style>
