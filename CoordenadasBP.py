@@ -2,14 +2,47 @@ import pandas as pd
 import folium
 import random
 import streamlit as st
+from PIL import Image
 from shapely import wkt
-from shapely.geometry import Point, Polygon
+from shapely.geometry import Point
 from folium.features import DivIcon
+from folium.plugins import HeatMap
+import matplotlib.pyplot as plt
+import io 
+import base64
+from io import BytesIO
 
-# Configurar el modo amplio de Streamlit
 st.set_page_config(layout="wide")
 
-st.image("assets/PBI BP Azul.png", use_container_width=True, output_format="PNG")
+# Mostrar el logo con clase específica
+# st.image("assets/PBI BP Azul.png", output_format="PNG", use_container_width=True)
+image = Image.open("assets/PBI BP Azul.png")
+
+# Convierte la imagen a base64
+buffered = BytesIO()
+image.save(buffered, format="PNG")
+img_base64 = base64.b64encode(buffered.getvalue()).decode()
+
+# HTML + CSS para mostrar la imagen con estilo
+st.markdown(
+    f"""
+    <style>
+        .custom-img {{
+            width: 100%;
+            max-height: 75px !important;
+            height: auto;
+            border-radius: 15px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            margin: 20px auto;
+            display: block;
+            background-color: #1B2D54
+        }}
+    </style>
+    <img src="data:image/png;base64,{img_base64}" class="custom-img" />
+    """,
+    unsafe_allow_html=True
+)
+# Estilos
 st.markdown(
     """
     <style>
@@ -36,13 +69,11 @@ st.markdown(
             margin: 10px;
         }
         img {
-            height: 75px !important;
-            float: left;
+            height: 560px !important;
             object-fit: contain;
-            background-color: #1B2D54;
         }
         .scrollable-table {
-            height: 450px;
+            height: 560px;
             overflow-y: scroll;
             display: block;
             border: 1px solid #ccc;
@@ -67,19 +98,13 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Configurar diseño con una barra lateral
 with st.sidebar:
     st.subheader("Sube tus archivos")
-    # Subir archivo CSV para geolocalización
     uploaded_file = st.file_uploader("Geolocalizaciones .csv", type=["csv"])
-
-    # Subir archivo XLSX para polígonos
     polygon_file = st.file_uploader("Poligonos .xlsx", type=["xlsx"])
 
-# Variable para almacenar los polígonos
 polygons = None
 
-# Leer archivo de polígonos si está disponible
 if polygon_file:
     polygon_data = pd.read_excel(polygon_file)
     if 'POLIGONO' in polygon_data.columns and 'Segmentacion' in polygon_data.columns and 'NOMBRE' in polygon_data.columns:
@@ -89,21 +114,13 @@ if polygon_file:
         }
 
 if uploaded_file:
-    # Leer el archivo CSV
     df = pd.read_csv(uploaded_file)
 
-    # Verificar si existe la columna 'geolocation'
     if 'geolocation' in df.columns:
-        # Convertir la columna de geolocalización en dos columnas separadas (latitud y longitud)
         df[['latitude', 'longitude']] = df['geolocation'].str.split(',', expand=True).astype(float)
-
-        # Convertir la columna 'fecha' a solo fecha
         df['fecha'] = pd.to_datetime(df['fecha']).dt.date
-
-        # Ordenar los datos por identificación del cliente, fecha y hora
         df = df.sort_values(by=['identification', 'fecha', 'hora'])
 
-        # Si hay polígonos, agregar la columna 'Sitio'
         if polygons:
             def get_polygon_name(lat, lon):
                 point = Point(lon, lat)
@@ -114,28 +131,37 @@ if uploaded_file:
 
             df['Sitio'] = df.apply(lambda row: get_polygon_name(row['latitude'], row['longitude']), axis=1)
 
-        # Combobox para seleccionar la identificación
-        identificaciones = df['identification'].unique()
-        st.subheader("Selecciona una identificación para actualizar el mapa")
-        seleccion_identificacion = st.selectbox("", identificaciones, key="identificacion_selector")
+        identificaciones = df['cliente'].unique()
 
-        # Filtrar los datos según la identificación seleccionada
-        cliente_data = df[df['identification'] == seleccion_identificacion]
+        col_cliente, col_fecha = st.columns([1, 1])
 
-        # Crear el mapa centrado en los puntos de la identificación seleccionada
+        with col_cliente:
+            st.markdown("#### Cliente")
+            seleccion_identificacion = st.selectbox("", identificaciones, key="identificacion_selector")
+
+        with col_fecha:
+            cliente_data_temp = df[df['cliente'] == seleccion_identificacion]
+            min_fecha = cliente_data_temp['fecha'].min()
+            max_fecha = cliente_data_temp['fecha'].max()
+            st.markdown("#### Fechas")
+            fecha_inicio, fecha_fin = st.date_input(
+                "",
+                value=(min_fecha, max_fecha),
+                min_value=min_fecha,
+                max_value=max_fecha,
+                key="fecha_selector"
+            )
+
+        cliente_data = df[
+            (df['cliente'] == seleccion_identificacion) &
+            (df['fecha'] >= fecha_inicio) & (df['fecha'] <= fecha_fin)
+        ]
+
         mapa = folium.Map(location=[cliente_data['latitude'].mean(), cliente_data['longitude'].mean()], zoom_start=12)
-
-        # Generar una lista de colores para los puntos
-        colors = ["black"]
-
-        # Seleccionar un color aleatorio para la identificación
-        color = random.choice(colors)
-
-        # Agregar puntos y línea al mapa
+        color = "black"
         puntos = list(zip(cliente_data['latitude'], cliente_data['longitude'], cliente_data['fecha'], cliente_data['hora'], cliente_data['monto']))
 
-        # Crear tres columnas para métricas
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
 
         with col1:
             st.markdown(
@@ -172,6 +198,19 @@ if uploaded_file:
                 unsafe_allow_html=True
             )
 
+        with col4:
+            ultimo = cliente_data[['fecha', 'hora']].sort_values(by=['fecha', 'hora'], ascending=False).head(1)
+            texto = f"{ultimo['fecha'].values[0]} - {int(ultimo['hora'].values[0])}h" if not ultimo.empty else "Sin datos"
+            st.markdown(
+                f"""
+                <div class="metric-card">
+                    Último Inicio de Sesión<br>
+                    {texto}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
         for idx, (lat, lon, fecha, hora, monto) in enumerate(puntos, start=1):
             popup_text = f"<b>Orden:</b> {idx}<br>Fecha: {fecha}<br>Hora: {hora}<br>Monto: ${monto}"
             folium.Marker(
@@ -184,12 +223,10 @@ if uploaded_file:
                 )
             ).add_to(mapa)
 
-        # Agregar línea entre los puntos
         if len(puntos) > 1:
             trayectoria = [(lat, lon) for lat, lon, fecha, hora, monto in puntos]
             folium.PolyLine(trayectoria, color=color, weight=2.5, opacity=0.7).add_to(mapa)
 
-        # Dibujar polígonos en el mapa
         if polygons:
             for name, (poly, segmentacion) in polygons.items():
                 color = "red" if segmentacion == "Riesgo" else "blue"
@@ -204,16 +241,48 @@ if uploaded_file:
                     popup=f"{name} ({segmentacion})"
                 ).add_to(mapa)
 
-        # Crear dos columnas: el mapa más grande
-        col_mapa, col_tabla = st.columns([2, 1])
+        col_geo, col_bar = st.columns([2, 1])
 
-        with col_mapa:
-            # Mostrar el mapa
+        with col_geo:
             st.subheader("Mapa Geolocalizacion")
-            st.components.v1.html(mapa._repr_html_(), height=600)
+            st.components.v1.html(mapa._repr_html_(), height=560)
+
+        with col_bar:
+            st.subheader("Accesos por Hora del Día")
+
+            hora_count = cliente_data['hora'].value_counts().sort_index()
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.bar(hora_count.index, hora_count.values, color='#1B2D54')
+            ax.set_xlabel('Hora del Día')
+            ax.set_ylabel('Cantidad de Accesos')
+            ax.set_title('Distribución de Accesos por Hora')
+
+            # Convertir la figura a base64
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", bbox_inches="tight")
+            buf.seek(0)
+            image_base64 = base64.b64encode(buf.read()).decode("utf-8")
+
+            # Insertar imagen con clase personalizada
+            st.markdown(
+                f"""
+                <div>
+                    <img src="data:image/png;base64,{image_base64}" class="bar-plot-img">
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        col_mapa_calor, col_tabla = st.columns([2, 1])
+
+        with col_mapa_calor:
+            st.subheader("Mapa de Calor de Accesos del Cliente")
+            mapa_calor = folium.Map(location=[cliente_data['latitude'].mean(), cliente_data['longitude'].mean()], zoom_start=12)
+            heat_data = cliente_data[['latitude', 'longitude']].values.tolist()
+            HeatMap(heat_data).add_to(mapa_calor)
+            st.components.v1.html(mapa_calor._repr_html_(), height=560)
 
         with col_tabla:
-            # Mostrar la tabla detallada con la información de la identificación seleccionada
             st.subheader("Detalles del Cliente")
             cliente_data['monto'] = cliente_data['monto'].round(2)
             if 'Sitio' in cliente_data.columns:
@@ -229,5 +298,6 @@ if uploaded_file:
                 """,
                 unsafe_allow_html=True
             )
+
     else:
         st.error("El archivo CSV debe tener una columna llamada 'geolocation'")
